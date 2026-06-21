@@ -88,6 +88,67 @@ curl -N http://localhost:8000/stream
 **参数**：
 - `limit`: 返回条数，默认 50，最大 500
 
+### POST /events
+写入一条自由格式事件日志。
+
+**请求体**：
+```json
+{
+  "sensor_id": "sensor-01",
+  "event_type": "calibration",
+  "payload": {"calibrated_by": "admin", "offset": -0.5},
+  "source": "user"
+}
+```
+
+**字段说明**：
+- `sensor_id`: 1-64 字符，仅允许字母数字、连字符、下划线
+- `event_type`: 1-128 字符的事件类型，如 `"calibration"`、`"firmware_update"`、`"manual_override"`
+- `payload`: 任意 JSON 对象，默认 `{}`
+- `source`: 事件来源，仅允许 `"api"`、`"system"`、`"user"` 三值之一
+
+**curl 示例**：
+```bash
+curl -X POST http://localhost:8000/events \
+  -H "Content-Type: application/json" \
+  -d '{"sensor_id":"sensor-01","event_type":"calibration","payload":{"offset":-0.5},"source":"user"}'
+```
+
+### GET /events
+查询事件日志，支持多条件筛选和游标翻页。
+
+**参数**：
+- `sensor_id`: 按传感器 ID 过滤（可选）
+- `event_type`: 按事件类型过滤（可选）
+- `source`: 按来源过滤，可选值 `"api"`、`"system"`、`"user"`（可选）
+- `limit`: 返回条数，默认 50，最大 500
+- `before`: 游标，返回 id 小于此值的事件，用于翻页（可选）
+
+结果按 `id DESC` 排列，即最新事件在前。翻页时取返回结果中最小的 `id` 作为下一页的 `before` 值。
+
+**curl 示例**：
+```bash
+# 按 sensor_id 过滤
+curl "http://localhost:8000/events?sensor_id=sensor-01"
+
+# 按 event_type 和 source 组合过滤
+curl "http://localhost:8000/events?event_type=calibration&source=user"
+
+# 游标翻页：第一页取 limit=2，然后用返回最小 id 作为 before
+curl "http://localhost:8000/events?limit=2"
+curl "http://localhost:8000/events?limit=2&before=5"
+```
+
+### DELETE /events/{id}
+按 ID 单条删除事件。
+
+**curl 示例**：
+```bash
+curl -X DELETE http://localhost:8000/events/1
+```
+
+删除成功返回 `{"status":"ok","deleted":1}`，ID 不存在时返回 404。
+
 ### GET /health
 健康检查。
 

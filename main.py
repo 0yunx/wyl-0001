@@ -3,15 +3,16 @@ import json
 import random
 import time
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 
 from models import (
     SensorData,
     AlertRule,
+    EventCreate,
     init_db,
     get_db,
     load_rules,
@@ -134,6 +135,79 @@ async def list_alerts(limit: int = 50):
         )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+@app.post("/events", status_code=201)
+async def create_event(event: EventCreate):
+    created_at = time.time()
+    payload_json = json.dumps(event.payload, ensure_ascii=False)
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO events (sensor_id, event_type, payload, source, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event.sensor_id, event.event_type, payload_json, event.source, created_at),
+        )
+        event_id = cursor.lastrowid
+        return {
+            "id": event_id,
+            "sensor_id": event.sensor_id,
+            "event_type": event.event_type,
+            "payload": event.payload,
+            "source": event.source,
+            "created_at": created_at,
+        }
+
+
+@app.get("/events")
+async def list_events(
+    sensor_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    before: Optional[int] = Query(None),
+):
+    conditions = []
+    params = []
+    if sensor_id is not None:
+        conditions.append("sensor_id = ?")
+        params.append(sensor_id)
+    if event_type is not None:
+        conditions.append("event_type = ?")
+        params.append(event_type)
+    if source is not None:
+        conditions.append("source = ?")
+        params.append(source)
+    if before is not None:
+        conditions.append("id < ?")
+        params.append(before)
+    where = ""
+    if conditions:
+        where = "WHERE " + " AND ".join(conditions)
+    with get_db() as conn:
+        cursor = conn.execute(
+            f"SELECT * FROM events {where} ORDER BY id DESC LIMIT ?",
+            (*params, limit),
+        )
+        rows = cursor.fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            d["payload"] = json.loads(d["payload"]) if d["payload"] else {}
+            results.append(d)
+        return results
+
+
+@app.delete("/events/{event_id}")
+async def delete_event(event_id: int):
+    with get_db() as conn:
+        cursor = conn.execute("SELECT id FROM events WHERE id = ?", (event_id,))
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        return {"status": "ok", "deleted": event_id}
 
 
 @app.get("/health")

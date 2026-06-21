@@ -1,8 +1,9 @@
+import json
 import math
 import sqlite3
 import time
 from datetime import datetime
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from contextlib import contextmanager
 
 from pydantic import BaseModel, Field, field_validator
@@ -69,11 +70,34 @@ class AnomalyRecord(BaseModel):
     std_humidity: Optional[float] = None
 
 
+class EventCreate(BaseModel):
+    sensor_id: str = Field(min_length=1, max_length=64)
+    event_type: str = Field(min_length=1, max_length=128)
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    source: str = Field(pattern=r"^(api|system|user)$")
+
+    @field_validator("sensor_id")
+    @classmethod
+    def sensor_id_must_be_valid(cls, v: str) -> str:
+        if not v.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("sensor_id must contain only alphanumeric chars, hyphens, underscores")
+        return v
+
+
+class EventRecord(BaseModel):
+    id: Optional[int] = None
+    sensor_id: str
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+    source: str
+    created_at: Optional[float] = None
+
+
 WINDOW_SIZE = 10
 SIGMA_THRESHOLD = 3
 MIN_STD_TEMP = 1.0
 MIN_STD_HUMIDITY = 5.0
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DEFAULT_TEMP_HIGH = 32.0
 DEFAULT_TEMP_LOW = 18.0
@@ -285,10 +309,27 @@ def _migrate_v2_to_v3(conn):
             )
 
 
+def _migrate_v3_to_v4(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload TEXT NOT NULL DEFAULT '{}',
+            source TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_sensor ON events(sensor_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source ON events(source)")
+
+
 _MIGRATIONS = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
     _migrate_v2_to_v3,
+    _migrate_v3_to_v4,
 ]
 
 
