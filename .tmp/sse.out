@@ -1,0 +1,28 @@
+data: {"id": null, "sensor_id": "sensor-01", "alert_type": "temp_high", "value": 37.91, "threshold": 35.0, "window_start": 1782007665.676341, "window_end": 1782007695.676341, "created_at": 1782007695.676341}
+
+data: {"id": null, "sensor_id": "sensor-02", "alert_type": "temp_high", "value": 38.58, "threshold": 35.0, "window_start": 1782007665.676341, "window_end": 1782007695.676341, "created_at": 1782007695.676341}
+
+data: {"id": null, "sensor_id": "sensor-05", "alert_type": "temp_high", "value": 36.25, "threshold": 35.0, "window_start": 1782007665.676341, "window_end": 1782007695.676341, "created_at": 1782007695.676341}
+
+data: {"id": null, "sensor_id": "sensor-08", "alert_type": "temp_high", "value": 37.55, "threshold": 35.0, "window_start": 1782007665.676341, "window_end": 1782007695.676341, "created_at": 1782007695.676341}
+
+data: {"id": null, "sensor_id": "sensor-01", "alert_type": "temp_high", "value": 37.42, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-02", "alert_type": "temp_high", "value": 37.82, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-03", "alert_type": "temp_high", "value": 30.52, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-04", "alert_type": "temp_high", "value": 32.01, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-05", "alert_type": "temp_high", "value": 36.16, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-06", "alert_type": "temp_high", "value": 31.53, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-07", "alert_type": "temp_high", "value": 29.99, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-08", "alert_type": "temp_high", "value": 37.48, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-09", "alert_type": "temp_high", "value": 34.48, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
+data: {"id": null, "sensor_id": "sensor-10", "alert_type": "temp_high", "value": 30.77, "threshold": 20.0, "window_start": 1782007695.712171, "window_end": 1782007725.712171, "created_at": 1782007725.712171}
+
