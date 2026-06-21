@@ -1,5 +1,6 @@
 import asyncio
 import math
+import time
 from typing import List, Set, Tuple
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,6 +18,7 @@ from models import (
 )
 
 WINDOW_SECONDS = 30
+STALE_SENSOR_THRESHOLD_SECONDS = 300
 
 _client_queues: List[asyncio.Queue] = []
 _lock = asyncio.Lock()
@@ -89,9 +91,11 @@ def _aggregate_window(window_start: float, window_end: float) -> List[AlertRecor
         rows = cursor.fetchall()
 
         current_triggered: Set[Tuple[str, str]] = set()
+        sensors_in_window: Set[str] = set()
 
         for row in rows:
             sensor_id = row["sensor_id"]
+            sensors_in_window.add(sensor_id)
             violations = _check_threshold(
                 rules,
                 row["max_temp"],
@@ -115,7 +119,6 @@ def _aggregate_window(window_start: float, window_end: float) -> List[AlertRecor
                         created_at=window_end,
                     )
                     new_alerts.append(alert)
-                    upsert_alert_state(sensor_id, alert_type, value, threshold, window_end)
 
                     conn.execute(
                         """
@@ -132,10 +135,58 @@ def _aggregate_window(window_start: float, window_end: float) -> List[AlertRecor
                             alert.created_at,
                         ),
                     )
+                    conn.execute(
+                        """
+                        INSERT INTO alert_state (sensor_id, alert_type, triggered_at, last_value, last_threshold)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(sensor_id, alert_type) DO UPDATE SET
+                            triggered_at = excluded.triggered_at,
+                            last_value = excluded.last_value,
+                            last_threshold = excluded.last_threshold
+                        """,
+                        (sensor_id, alert_type, window_end, value, threshold),
+                    )
 
+        cleared = set()
         for key in active_keys - current_triggered:
+            cleared.add(key)
+
+        if sensors_in_window:
+            cursor2 = conn.execute(
+                "SELECT MAX(timestamp) as overall_max FROM sensor_readings WHERE timestamp < ?",
+                (window_end,),
+            )
+            row_max = cursor2.fetchone()
+            overall_max_ts = row_max["overall_max"] if row_max else None
+        else:
+            overall_max_ts = None
+
+        if overall_max_ts is not None:
+            staleness_cutoff = overall_max_ts - STALE_SENSOR_THRESHOLD_SECONDS
+            cursor3 = conn.execute(
+                """
+                SELECT DISTINCT a.sensor_id, a.alert_type
+                FROM alert_state a
+                LEFT JOIN (
+                    SELECT sensor_id, MAX(timestamp) as last_ts
+                    FROM sensor_readings
+                    WHERE timestamp < ?
+                    GROUP BY sensor_id
+                ) s ON a.sensor_id = s.sensor_id
+                WHERE s.sensor_id IS NULL OR s.last_ts < ?
+                """,
+                (window_end, staleness_cutoff),
+            )
+            for row in cursor3.fetchall():
+                key = (row["sensor_id"], row["alert_type"])
+                cleared.add(key)
+
+        for key in cleared:
             sensor_id, alert_type = key
-            remove_alert_state(sensor_id, alert_type)
+            conn.execute(
+                "DELETE FROM alert_state WHERE sensor_id = ? AND alert_type = ?",
+                (sensor_id, alert_type),
+            )
 
     return new_alerts
 
@@ -145,8 +196,7 @@ def _catch_up_aggregate() -> List[AlertRecord]:
 
     with get_db() as conn:
         cursor = conn.execute(
-            "SELECT MAX(timestamp) as max_ts FROM sensor_readings WHERE timestamp > ?",
-            (checkpoint,),
+            "SELECT MAX(timestamp) as max_ts FROM sensor_readings"
         )
         row = cursor.fetchone()
         max_ts = row["max_ts"] if row and row["max_ts"] is not None else None
@@ -157,8 +207,6 @@ def _catch_up_aggregate() -> List[AlertRecord]:
     all_new_alerts: List[AlertRecord] = []
 
     window_start = math.floor(checkpoint / WINDOW_SECONDS) * WINDOW_SECONDS
-    if window_start < checkpoint:
-        window_start += WINDOW_SECONDS
 
     while window_start + WINDOW_SECONDS <= max_ts:
         window_end = window_start + WINDOW_SECONDS

@@ -73,7 +73,12 @@ WINDOW_SIZE = 10
 SIGMA_THRESHOLD = 3
 MIN_STD_TEMP = 1.0
 MIN_STD_HUMIDITY = 5.0
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+DEFAULT_TEMP_HIGH = 32.0
+DEFAULT_TEMP_LOW = 18.0
+DEFAULT_HUMIDITY_HIGH = 75.0
+DEFAULT_HUMIDITY_LOW = 35.0
 
 
 @contextmanager
@@ -168,11 +173,17 @@ def _migrate_v0_to_v1(conn):
     conn.execute(
         "INSERT OR IGNORE INTO rules (id, temp_high, temp_low, humidity_high, humidity_low, updated_at) "
         "VALUES (1, ?, ?, ?, ?, ?)",
-        (35.0, 0.0, 90.0, 10.0, datetime.now().timestamp()),
+        (
+            DEFAULT_TEMP_HIGH,
+            DEFAULT_TEMP_LOW,
+            DEFAULT_HUMIDITY_HIGH,
+            DEFAULT_HUMIDITY_LOW,
+            datetime.now().timestamp(),
+        ),
     )
     conn.execute(
         "INSERT OR IGNORE INTO aggregation_checkpoints (id, last_window_end) VALUES (1, ?)",
-        (datetime.now().timestamp(),),
+        (0.0,),
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_ts ON sensor_readings(timestamp)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_sensor ON sensor_readings(sensor_id)")
@@ -198,9 +209,86 @@ def _migrate_v1_to_v2(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_received_at ON anomalies(received_at)")
 
 
+def _migrate_v2_to_v3(conn):
+    """
+    Schema v3:
+    - Tune default thresholds based on simulated data distribution
+    - Reset checkpoint to 0.0 so no historical readings are skipped
+    - Clean alert_state of stale entries (threshold mismatch with rules, dead sensors)
+    - Add rule_version column to rules table to detect hot-reload conflicts
+    """
+    try:
+        conn.execute("ALTER TABLE rules ADD COLUMN rule_version INTEGER NOT NULL DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.execute(
+        """
+        UPDATE rules
+        SET temp_high = ?,
+            temp_low = ?,
+            humidity_high = ?,
+            humidity_low = ?,
+            updated_at = ?,
+            rule_version = rule_version + 1
+        WHERE id = 1
+          AND (
+              temp_high IS NULL OR temp_high != ?
+              OR temp_low IS NULL OR temp_low != ?
+              OR humidity_high IS NULL OR humidity_high != ?
+              OR humidity_low IS NULL OR humidity_low != ?
+          )
+        """,
+        (
+            DEFAULT_TEMP_HIGH,
+            DEFAULT_TEMP_LOW,
+            DEFAULT_HUMIDITY_HIGH,
+            DEFAULT_HUMIDITY_LOW,
+            datetime.now().timestamp(),
+            DEFAULT_TEMP_HIGH,
+            DEFAULT_TEMP_LOW,
+            DEFAULT_HUMIDITY_HIGH,
+            DEFAULT_HUMIDITY_LOW,
+        ),
+    )
+
+    conn.execute(
+        "UPDATE aggregation_checkpoints SET last_window_end = 0.0 WHERE id = 1",
+    )
+
+    cursor = conn.execute(
+        "SELECT temp_high, temp_low, humidity_high, humidity_low FROM rules WHERE id = 1"
+    )
+    rule = cursor.fetchone()
+    if rule is not None:
+        stale_keys = []
+        cursor2 = conn.execute(
+            "SELECT sensor_id, alert_type, last_threshold FROM alert_state"
+        )
+        for row in cursor2.fetchall():
+            expected = None
+            at = row["alert_type"]
+            if at == "temp_high":
+                expected = rule["temp_high"]
+            elif at == "temp_low":
+                expected = rule["temp_low"]
+            elif at == "humidity_high":
+                expected = rule["humidity_high"]
+            elif at == "humidity_low":
+                expected = rule["humidity_low"]
+            if expected is None or abs(row["last_threshold"] - expected) > 1e-9:
+                stale_keys.append((row["sensor_id"], at))
+        for sid, at in stale_keys:
+            conn.execute(
+                "DELETE FROM alert_state WHERE sensor_id = ? AND alert_type = ?",
+                (sid, at),
+            )
+
+
 _MIGRATIONS = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
+    _migrate_v2_to_v3,
 ]
 
 
@@ -232,7 +320,16 @@ def load_rules() -> AlertRule:
 def save_rules(rule: AlertRule):
     with get_db() as conn:
         conn.execute(
-            "UPDATE rules SET temp_high=?, temp_low=?, humidity_high=?, humidity_low=?, updated_at=? WHERE id = 1",
+            """
+            UPDATE rules
+            SET temp_high = ?,
+                temp_low = ?,
+                humidity_high = ?,
+                humidity_low = ?,
+                updated_at = ?,
+                rule_version = COALESCE(rule_version, 1) + 1
+            WHERE id = 1
+            """,
             (
                 rule.temp_high,
                 rule.temp_low,
@@ -241,6 +338,27 @@ def save_rules(rule: AlertRule):
                 datetime.now().timestamp(),
             ),
         )
+        stale_pairs = [
+            ("temp_high", rule.temp_high),
+            ("temp_low", rule.temp_low),
+            ("humidity_high", rule.humidity_high),
+            ("humidity_low", rule.humidity_low),
+        ]
+        for alert_type, expected in stale_pairs:
+            if expected is None:
+                conn.execute(
+                    "DELETE FROM alert_state WHERE alert_type = ?",
+                    (alert_type,),
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM alert_state
+                    WHERE alert_type = ?
+                      AND ABS(last_threshold - ?) > 1e-9
+                    """,
+                    (alert_type, expected),
+                )
 
 
 def load_alert_state() -> Set[Tuple[str, str]]:

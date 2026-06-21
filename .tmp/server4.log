@@ -1,0 +1,118 @@
+INFO:     Started server process [28524]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Job "_aggregation_job (trigger: interval[0:00:30], next run at: 2026-06-21 11:17:13 CST)" raised an exception
+Traceback (most recent call last):
+  File "D:\python\Lib\site-packages\apscheduler\executors\base_py3.py", line 30, in run_coroutine_job
+    retval = await job.func(*job.args, **job.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 174, in _aggregation_job
+    alerts = _catch_up_aggregate()
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 165, in _catch_up_aggregate
+    alerts = _aggregate_window(window_start, window_end)
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 118, in _aggregate_window
+    upsert_alert_state(sensor_id, alert_type, value, threshold, window_end)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\models.py", line 254, in upsert_alert_state
+    conn.execute(
+    ~~~~~~~~~~~~^
+        """
+        ^^^
+    ...<7 lines>...
+        (sensor_id, alert_type, triggered_at, value, threshold),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+sqlite3.OperationalError: database is locked
+Job "_aggregation_job (trigger: interval[0:00:30], next run at: 2026-06-21 11:17:43 CST)" raised an exception
+Traceback (most recent call last):
+  File "D:\python\Lib\site-packages\apscheduler\executors\base_py3.py", line 30, in run_coroutine_job
+    retval = await job.func(*job.args, **job.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 174, in _aggregation_job
+    alerts = _catch_up_aggregate()
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 165, in _catch_up_aggregate
+    alerts = _aggregate_window(window_start, window_end)
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 118, in _aggregate_window
+    upsert_alert_state(sensor_id, alert_type, value, threshold, window_end)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\models.py", line 254, in upsert_alert_state
+    conn.execute(
+    ~~~~~~~~~~~~^
+        """
+        ^^^
+    ...<7 lines>...
+        (sensor_id, alert_type, triggered_at, value, threshold),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+sqlite3.OperationalError: database is locked
+Job "_aggregation_job (trigger: interval[0:00:30], next run at: 2026-06-21 11:18:13 CST)" raised an exception
+Traceback (most recent call last):
+  File "D:\python\Lib\site-packages\apscheduler\executors\base_py3.py", line 30, in run_coroutine_job
+    retval = await job.func(*job.args, **job.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 174, in _aggregation_job
+    alerts = _catch_up_aggregate()
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 165, in _catch_up_aggregate
+    alerts = _aggregate_window(window_start, window_end)
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 118, in _aggregate_window
+    upsert_alert_state(sensor_id, alert_type, value, threshold, window_end)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\models.py", line 254, in upsert_alert_state
+    conn.execute(
+    ~~~~~~~~~~~~^
+        """
+        ^^^
+    ...<7 lines>...
+        (sensor_id, alert_type, triggered_at, value, threshold),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+sqlite3.OperationalError: database is locked
+Job "_aggregation_job (trigger: interval[0:00:30], next run at: 2026-06-21 11:18:43 CST)" raised an exception
+Traceback (most recent call last):
+  File "D:\python\Lib\site-packages\apscheduler\executors\base_py3.py", line 30, in run_coroutine_job
+    retval = await job.func(*job.args, **job.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 174, in _aggregation_job
+    alerts = _catch_up_aggregate()
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 165, in _catch_up_aggregate
+    alerts = _aggregate_window(window_start, window_end)
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 118, in _aggregate_window
+    upsert_alert_state(sensor_id, alert_type, value, threshold, window_end)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\models.py", line 254, in upsert_alert_state
+    conn.execute(
+    ~~~~~~~~~~~~^
+        """
+        ^^^
+    ...<7 lines>...
+        (sensor_id, alert_type, triggered_at, value, threshold),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+sqlite3.OperationalError: database is locked
+Job "_aggregation_job (trigger: interval[0:00:30], next run at: 2026-06-21 11:19:13 CST)" raised an exception
+Traceback (most recent call last):
+  File "D:\python\Lib\site-packages\apscheduler\executors\base_py3.py", line 30, in run_coroutine_job
+    retval = await job.func(*job.args, **job.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 174, in _aggregation_job
+    alerts = _catch_up_aggregate()
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 165, in _catch_up_aggregate
+    alerts = _aggregate_window(window_start, window_end)
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\scheduler.py", line 138, in _aggregate_window
+    remove_alert_state(sensor_id, alert_type)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\16473\Documents\人物\题目\wyl-0001\models.py", line 269, in remove_alert_state
+    conn.execute(
+    ~~~~~~~~~~~~^
+        "DELETE FROM alert_state WHERE sensor_id = ? AND alert_type = ?",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        (sensor_id, alert_type),
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+sqlite3.OperationalError: database is locked

@@ -1,0 +1,2 @@
+data: {"id": null, "sensor_id": "sensor-10", "alert_type": "temp_high", "value": 36.75, "threshold": 5.0, "window_start": 1782011970.0, "window_end": 1782012000.0, "created_at": 1782012000.0}
+
