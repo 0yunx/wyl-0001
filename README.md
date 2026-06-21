@@ -36,7 +36,7 @@ python main.py
 服务默认监听 `http://0.0.0.0:8000`。
 
 ## API 接口
-
+ 
 ### POST /ingest
 上报传感器数据。
 
