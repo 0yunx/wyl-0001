@@ -12,13 +12,12 @@ from contextlib import asynccontextmanager
 from models import (
     SensorData,
     AlertRule,
-    AlertRecord,
     init_db,
     get_db,
     load_rules,
     save_rules,
 )
-from scheduler import create_scheduler, alert_queue
+from scheduler import create_scheduler, register_client, unregister_client
 
 NUM_SENSORS = 10
 sensor_tasks: List[asyncio.Task] = []
@@ -55,14 +54,15 @@ async def sensor_worker(sensor_id: str):
         await asyncio.sleep(1)
 
 
-async def sse_broadcaster():
-    while True:
-        try:
-            alert = await alert_queue.get()
+async def sse_client_stream(q: asyncio.Queue):
+    try:
+        while True:
+            alert = await q.get()
             yield f"data: {json.dumps(alert, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            print(f"[sse broadcaster] error: {e}")
-            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await unregister_client(q)
 
 
 @asynccontextmanager
@@ -119,8 +119,9 @@ async def update_rules(rule: AlertRule):
 
 @app.get("/stream")
 async def stream_alerts():
+    q = await register_client()
     return StreamingResponse(
-        sse_broadcaster(),
+        sse_client_stream(q),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

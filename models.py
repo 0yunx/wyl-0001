@@ -1,7 +1,6 @@
 import sqlite3
-import json
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Set, Tuple
 from contextlib import contextmanager
 
 from pydantic import BaseModel, Field, field_validator
@@ -99,6 +98,22 @@ def init_db():
                 updated_at REAL NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS alert_state (
+                sensor_id TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                triggered_at REAL NOT NULL,
+                last_value REAL NOT NULL,
+                last_threshold REAL NOT NULL,
+                PRIMARY KEY (sensor_id, alert_type)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS aggregation_checkpoints (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                last_window_end REAL NOT NULL
+            )
+        """)
         cursor = conn.execute("SELECT COUNT(*) as cnt FROM rules WHERE id = 1")
         row = cursor.fetchone()
         if row["cnt"] == 0:
@@ -106,6 +121,14 @@ def init_db():
                 "INSERT INTO rules (id, temp_high, temp_low, humidity_high, humidity_low, updated_at) "
                 "VALUES (1, ?, ?, ?, ?, ?)",
                 (35.0, 0.0, 90.0, 10.0, datetime.now().timestamp()),
+            )
+
+        cursor = conn.execute("SELECT COUNT(*) as cnt FROM aggregation_checkpoints WHERE id = 1")
+        row = cursor.fetchone()
+        if row["cnt"] == 0:
+            conn.execute(
+                "INSERT INTO aggregation_checkpoints (id, last_window_end) VALUES (1, ?)",
+                (datetime.now().timestamp(),),
             )
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_ts ON sensor_readings(timestamp)")
@@ -136,4 +159,48 @@ def save_rules(rule: AlertRule):
                 rule.humidity_low,
                 datetime.now().timestamp(),
             ),
+        )
+
+
+def load_alert_state() -> Set[Tuple[str, str]]:
+    with get_db() as conn:
+        cursor = conn.execute("SELECT sensor_id, alert_type FROM alert_state")
+        return {(row["sensor_id"], row["alert_type"]) for row in cursor.fetchall()}
+
+
+def upsert_alert_state(sensor_id: str, alert_type: str, value: float, threshold: float, triggered_at: float):
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO alert_state (sensor_id, alert_type, triggered_at, last_value, last_threshold)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(sensor_id, alert_type) DO UPDATE SET
+                triggered_at = excluded.triggered_at,
+                last_value = excluded.last_value,
+                last_threshold = excluded.last_threshold
+            """,
+            (sensor_id, alert_type, triggered_at, value, threshold),
+        )
+
+
+def remove_alert_state(sensor_id: str, alert_type: str):
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM alert_state WHERE sensor_id = ? AND alert_type = ?",
+            (sensor_id, alert_type),
+        )
+
+
+def load_checkpoint() -> float:
+    with get_db() as conn:
+        cursor = conn.execute("SELECT last_window_end FROM aggregation_checkpoints WHERE id = 1")
+        row = cursor.fetchone()
+        return row["last_window_end"] if row else datetime.now().timestamp()
+
+
+def save_checkpoint(window_end: float):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE aggregation_checkpoints SET last_window_end = ? WHERE id = 1",
+            (window_end,),
         )
