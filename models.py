@@ -1,6 +1,8 @@
+import math
 import sqlite3
+import time
 from datetime import datetime
-from typing import Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 from contextlib import contextmanager
 
 from pydantic import BaseModel, Field, field_validator
@@ -52,6 +54,23 @@ class AlertRecord(BaseModel):
     window_start: float
     window_end: float
     created_at: Optional[float] = None
+
+
+class AnomalyRecord(BaseModel):
+    id: Optional[int] = None
+    sensor_id: str
+    temperature: float
+    humidity: float
+    timestamp: float
+    received_at: float
+    mean_temp: Optional[float] = None
+    std_temp: Optional[float] = None
+    mean_humidity: Optional[float] = None
+    std_humidity: Optional[float] = None
+
+
+WINDOW_SIZE = 10
+SIGMA_THRESHOLD = 3
 
 
 @contextmanager
@@ -114,6 +133,20 @@ def init_db():
                 last_window_end REAL NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS anomalies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sensor_id TEXT NOT NULL,
+                temperature REAL NOT NULL,
+                humidity REAL NOT NULL,
+                timestamp REAL NOT NULL,
+                received_at REAL NOT NULL,
+                mean_temp REAL,
+                std_temp REAL,
+                mean_humidity REAL,
+                std_humidity REAL
+            )
+        """)
         cursor = conn.execute("SELECT COUNT(*) as cnt FROM rules WHERE id = 1")
         row = cursor.fetchone()
         if row["cnt"] == 0:
@@ -134,6 +167,8 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_ts ON sensor_readings(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_sensor ON sensor_readings(sensor_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_sensor ON alerts(sensor_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_sensor ON anomalies(sensor_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_received_at ON anomalies(received_at)")
 
 
 def load_rules() -> AlertRule:
@@ -204,3 +239,101 @@ def save_checkpoint(window_end: float):
             "UPDATE aggregation_checkpoints SET last_window_end = ? WHERE id = 1",
             (window_end,),
         )
+
+
+def _get_recent_readings(conn, sensor_id: str, limit: int) -> List[sqlite3.Row]:
+    cursor = conn.execute(
+        """
+        SELECT temperature, humidity, timestamp
+        FROM sensor_readings
+        WHERE sensor_id = ?
+        ORDER BY timestamp DESC, id DESC
+        LIMIT ?
+        """,
+        (sensor_id, limit),
+    )
+    return cursor.fetchall()
+
+
+def _mean_std(values: List[float]) -> Tuple[Optional[float], Optional[float]]:
+    n = len(values)
+    if n < 2:
+        return None, None
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / (n - 1)
+    std = math.sqrt(variance)
+    return mean, std
+
+
+def clean_and_ingest(data: SensorData) -> dict:
+    """
+    Data cleaning pipeline: sliding window outlier detection.
+    If the new reading deviates more than SIGMA_THRESHOLD standard deviations
+    from the mean of the last WINDOW_SIZE readings, it goes to anomalies table
+    instead of sensor_readings.
+    Returns a dict with status info.
+    """
+    ts = data.timestamp if data.timestamp is not None else time.time()
+    received_at = time.time()
+
+    with get_db() as conn:
+        recent = _get_recent_readings(conn, data.sensor_id, WINDOW_SIZE)
+
+        if len(recent) >= 2:
+            temps = [row["temperature"] for row in recent]
+            hums = [row["humidity"] for row in recent]
+
+            mean_temp, std_temp = _mean_std(temps)
+            mean_hum, std_hum = _mean_std(hums)
+
+            temp_outlier = (
+                mean_temp is not None
+                and std_temp is not None
+                and std_temp > 0
+                and abs(data.temperature - mean_temp) > SIGMA_THRESHOLD * std_temp
+            )
+            humidity_outlier = (
+                mean_hum is not None
+                and std_hum is not None
+                and std_hum > 0
+                and abs(data.humidity - mean_hum) > SIGMA_THRESHOLD * std_hum
+            )
+
+            if temp_outlier or humidity_outlier:
+                conn.execute(
+                    """
+                    INSERT INTO anomalies
+                        (sensor_id, temperature, humidity, timestamp, received_at,
+                         mean_temp, std_temp, mean_humidity, std_humidity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        data.sensor_id,
+                        data.temperature,
+                        data.humidity,
+                        ts,
+                        received_at,
+                        mean_temp,
+                        std_temp,
+                        mean_hum,
+                        std_hum,
+                    ),
+                )
+                return {
+                    "status": "anomaly",
+                    "received_at": received_at,
+                    "reason": "outlier_detected",
+                    "mean_temp": mean_temp,
+                    "std_temp": std_temp,
+                    "mean_humidity": mean_hum,
+                    "std_humidity": std_hum,
+                }
+
+        conn.execute(
+            "INSERT INTO sensor_readings (sensor_id, temperature, humidity, timestamp) VALUES (?, ?, ?, ?)",
+            (data.sensor_id, data.temperature, data.humidity, ts),
+        )
+        return {
+            "status": "ok",
+            "received_at": received_at,
+        }

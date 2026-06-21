@@ -16,6 +16,7 @@ from models import (
     get_db,
     load_rules,
     save_rules,
+    clean_and_ingest,
 )
 from scheduler import create_scheduler, register_client, unregister_client
 
@@ -42,11 +43,7 @@ async def sensor_worker(sensor_id: str):
                 timestamp=time.time(),
             )
 
-            with get_db() as conn:
-                conn.execute(
-                    "INSERT INTO sensor_readings (sensor_id, temperature, humidity, timestamp) VALUES (?, ?, ?, ?)",
-                    (data.sensor_id, data.temperature, data.humidity, data.timestamp),
-                )
+            result = clean_and_ingest(data)
 
         except Exception as e:
             print(f"[sensor {sensor_id}] error: {e}")
@@ -96,13 +93,8 @@ app = FastAPI(title="Edge IoT Thermo Gateway Simulator", lifespan=lifespan)
 
 @app.post("/ingest", status_code=201)
 async def ingest_data(data: SensorData):
-    ts = data.timestamp if data.timestamp is not None else time.time()
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO sensor_readings (sensor_id, temperature, humidity, timestamp) VALUES (?, ?, ?, ?)",
-            (data.sensor_id, data.temperature, data.humidity, ts),
-        )
-    return {"status": "ok", "received_at": ts}
+    result = clean_and_ingest(data)
+    return result
 
 
 @app.get("/rules")

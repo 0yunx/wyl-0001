@@ -1,23 +1,24 @@
 # Edge IoT 温控网关模拟器
 
-一个基于 FastAPI 的边缘 IoT 温控网关模拟器，支持温湿度数据采集、阈值告警、SSE 实时推送、断点续跑。
+基于 FastAPI 的边缘 IoT 温控网关模拟器，支持温湿度数据采集、阈值告警去重、SSE 广播推送、断点续跑补齐。
 
 ## 功能特性
 
 - **10 个协程模拟传感器**：每秒推送温湿度数据
 - **/ingest 数据接入**：FastAPI + Pydantic 校验，写入 SQLite
 - **/rules 阈值配置**：支持热更新，无需重启服务
-- **APScheduler 滚动聚合**：每 30 秒聚合一次，检测超阈值
-- **/stream SSE 实时推送**：告警实时推送到客户端
-- **断点续跑**：SQLite 持久化存储，重启不丢数据
+- **APScheduler 定长窗口聚合**：每 30 秒一个窗口，检测超阈值
+- **告警去重**：同一 (sensor_id, alert_type) 只在状态转换时写入，不会每周期重复刷同一条
+- **/stream SSE 广播推送**：每个客户端独立 Queue，所有客户端收到相同告警
+- **断点续跑补齐**：checkpoint 持久化，重启后从上次断点补齐所有遗漏窗口
 
 ## 项目结构
 
 ```
 .
 ├── main.py        # FastAPI 主程序，传感器模拟，API 端点
-├── models.py      # Pydantic 模型，SQLite 数据库操作
-├── scheduler.py   # APScheduler 聚合任务，告警检测
+├── models.py      # Pydantic 模型，SQLite 数据库操作，alert_state / checkpoint 管理
+├── scheduler.py   # APScheduler 聚合任务，告警去重，广播分发，checkpoint 补齐
 └── gateway.db     # SQLite 数据库文件（运行时自动创建）
 ```
 
@@ -72,10 +73,10 @@ python main.py
 }
 ```
 
-所有字段可选，留空表示不启用对应告警。
+所有字段可选，留 null 表示不启用对应告警。
 
 ### GET /stream
-SSE 实时告警流。
+SSE 实时告警广播流。多个客户端同时连接，每个客户端都收到相同的告警消息。
 
 ```bash
 curl -N http://localhost:8000/stream
@@ -117,23 +118,28 @@ curl -X POST http://localhost:8000/ingest \
   -d '{"sensor_id":"sensor-01","temperature":25.0,"humidity":-10.0}'
 ```
 
-### 3. 调高阈值后新告警立即从 /stream 冒出
+### 3. 调低阈值后新告警从 /stream 冒出
 
 **终端 1**：监听 SSE 流
 ```bash
 curl -N http://localhost:8000/stream
 ```
 
-**终端 2**：调低阈值触发告警（例如把 temp_high 设到 20 度，很容易触发）
+**终端 2**：同样监听（验证广播，两个终端都应收到相同消息）
+```bash
+curl -N http://localhost:8000/stream
+```
+
+**终端 3**：调低阈值触发告警
 ```bash
 curl -X PUT http://localhost:8000/rules \
   -H "Content-Type: application/json" \
   -d '{"temp_high":20.0,"temp_low":null,"humidity_high":null,"humidity_low":null}'
 ```
 
-等待最多 30 秒（聚合周期），终端 1 应该会收到告警事件。
+等待最多 30 秒（聚合周期），终端 1 和终端 2 应该同时收到相同的告警事件。
 
-### 4. 杀进程重启 alerts 不清零
+### 4. 杀进程重启 alerts 不清零，且停机期间的读数被补聚合
 
 ```bash
 # 查看当前告警数
@@ -144,20 +150,25 @@ curl http://localhost:8000/alerts?limit=5
 # 重新启动
 python main.py
 
-# 再次查看告警 - 历史数据仍然存在
+# 再次查看告警 - 历史数据仍然存在，停机期间的外部数据（通过 /ingest 写入的）也会被补聚合
 curl http://localhost:8000/alerts?limit=5
 ```
 
 ## 设计说明
 
-### 滚动聚合
-APScheduler 每 30 秒执行一次，查询过去 30 秒内每个传感器的最大/最小/平均值，与阈值对比，产生的告警写入 alerts 表并推入 SSE 队列。
+### 定长窗口聚合 + Checkpoint 补齐
+聚合窗口为定长 30 秒，对齐到整分钟（如 00:00~00:30, 00:30~01:00）。每次聚合完成后将 `window_end` 写入 `aggregation_checkpoints` 表。重启时从 checkpoint 读取上次处理到哪个窗口，补齐所有遗漏窗口。这保证了：即使进程停了 5 分钟再起，这 5 分钟内通过 /ingest 写入的读数也会被正确聚合，告警判定不会遗漏。
+
+### 告警去重（状态转换模型）
+`alert_state` 表持久化当前活跃的 (sensor_id, alert_type) 对。聚合逻辑只在 **状态转换** 时写入 alerts：
+- 正常 → 超阈值：插入 alert + 更新 alert_state
+- 超阈值 → 超阈值（持续）：不重复写入
+- 超阈值 → 恢复正常：从 alert_state 删除，下次再超时可重新告警
+
+阈值热更新也会触发去重逻辑：调低阈值后，之前未超阈的传感器变为超阈，因为 alert_state 中没有对应 key，会正确生成新告警。
+
+### SSE 广播
+每个 /stream 客户端连接时创建独立的 asyncio.Queue，注册到广播列表。告警产生时遍历所有客户端 Queue 推送，实现真正的广播——多个客户端同时连接都收到相同消息。客户端断开时自动从广播列表移除。
 
 ### 阈值热更新
-规则存储在 SQLite 的 `rules` 表中，每次聚合任务运行时都从数据库读取最新规则，因此 PUT /rules 更新后无需重启服务，下一个聚合周期立即生效。
-
-### 断点续跑
-所有数据（传感器读数、告警、规则）都持久化到 SQLite，服务重启后自动恢复。传感器模拟协程在启动时重新创建，继续产生数据。
-
-### SSE 推送
-告警通过 asyncio.Queue 传递，`/stream` 端点从队列消费并以 SSE 格式推送。多个客户端各自独立消费队列中的消息（当前实现为广播式，新客户端会从连接时刻起接收新告警）。
+规则存储在 SQLite 的 `rules` 表中，每次聚合任务运行时都从数据库读取最新规则，因此 PUT /rules 更新后无需重启服务，下一个聚合周期立即生效。热更新后的新阈值会与 alert_state 中的旧状态做对比，产生正确的状态转换。
