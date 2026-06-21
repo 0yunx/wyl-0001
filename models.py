@@ -71,6 +71,9 @@ class AnomalyRecord(BaseModel):
 
 WINDOW_SIZE = 10
 SIGMA_THRESHOLD = 3
+MIN_STD_TEMP = 1.0
+MIN_STD_HUMIDITY = 5.0
+SCHEMA_VERSION = 2
 
 
 @contextmanager
@@ -84,91 +87,134 @@ def get_db():
         conn.close()
 
 
+def _ensure_schema_version_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            version INTEGER NOT NULL,
+            applied_at REAL NOT NULL
+        )
+    """)
+    cursor = conn.execute("SELECT COUNT(*) as cnt FROM schema_version WHERE id = 1")
+    row = cursor.fetchone()
+    if row["cnt"] == 0:
+        conn.execute(
+            "INSERT INTO schema_version (id, version, applied_at) VALUES (1, 0, ?)",
+            (datetime.now().timestamp(),),
+        )
+
+
+def _get_schema_version(conn) -> int:
+    cursor = conn.execute("SELECT version FROM schema_version WHERE id = 1")
+    row = cursor.fetchone()
+    return row["version"] if row else 0
+
+
+def _set_schema_version(conn, version: int):
+    conn.execute(
+        "UPDATE schema_version SET version = ?, applied_at = ? WHERE id = 1",
+        (version, datetime.now().timestamp()),
+    )
+
+
+def _migrate_v0_to_v1(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sensor_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor_id TEXT NOT NULL,
+            temperature REAL NOT NULL,
+            humidity REAL NOT NULL,
+            timestamp REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor_id TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            value REAL NOT NULL,
+            threshold REAL NOT NULL,
+            window_start REAL NOT NULL,
+            window_end REAL NOT NULL,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rules (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            temp_high REAL,
+            temp_low REAL,
+            humidity_high REAL,
+            humidity_low REAL,
+            updated_at REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alert_state (
+            sensor_id TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            triggered_at REAL NOT NULL,
+            last_value REAL NOT NULL,
+            last_threshold REAL NOT NULL,
+            PRIMARY KEY (sensor_id, alert_type)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS aggregation_checkpoints (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_window_end REAL NOT NULL
+        )
+    """)
+    conn.execute(
+        "INSERT OR IGNORE INTO rules (id, temp_high, temp_low, humidity_high, humidity_low, updated_at) "
+        "VALUES (1, ?, ?, ?, ?, ?)",
+        (35.0, 0.0, 90.0, 10.0, datetime.now().timestamp()),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO aggregation_checkpoints (id, last_window_end) VALUES (1, ?)",
+        (datetime.now().timestamp(),),
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_ts ON sensor_readings(timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_sensor ON sensor_readings(sensor_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_sensor ON alerts(sensor_id)")
+
+
+def _migrate_v1_to_v2(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS anomalies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor_id TEXT NOT NULL,
+            temperature REAL NOT NULL,
+            humidity REAL NOT NULL,
+            timestamp REAL NOT NULL,
+            received_at REAL NOT NULL,
+            mean_temp REAL,
+            std_temp REAL,
+            mean_humidity REAL,
+            std_humidity REAL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_sensor ON anomalies(sensor_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_received_at ON anomalies(received_at)")
+
+
+_MIGRATIONS = [
+    _migrate_v0_to_v1,
+    _migrate_v1_to_v2,
+]
+
+
 def init_db():
     with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sensor_readings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sensor_id TEXT NOT NULL,
-                temperature REAL NOT NULL,
-                humidity REAL NOT NULL,
-                timestamp REAL NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sensor_id TEXT NOT NULL,
-                alert_type TEXT NOT NULL,
-                value REAL NOT NULL,
-                threshold REAL NOT NULL,
-                window_start REAL NOT NULL,
-                window_end REAL NOT NULL,
-                created_at REAL NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS rules (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                temp_high REAL,
-                temp_low REAL,
-                humidity_high REAL,
-                humidity_low REAL,
-                updated_at REAL NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS alert_state (
-                sensor_id TEXT NOT NULL,
-                alert_type TEXT NOT NULL,
-                triggered_at REAL NOT NULL,
-                last_value REAL NOT NULL,
-                last_threshold REAL NOT NULL,
-                PRIMARY KEY (sensor_id, alert_type)
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS aggregation_checkpoints (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                last_window_end REAL NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS anomalies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sensor_id TEXT NOT NULL,
-                temperature REAL NOT NULL,
-                humidity REAL NOT NULL,
-                timestamp REAL NOT NULL,
-                received_at REAL NOT NULL,
-                mean_temp REAL,
-                std_temp REAL,
-                mean_humidity REAL,
-                std_humidity REAL
-            )
-        """)
-        cursor = conn.execute("SELECT COUNT(*) as cnt FROM rules WHERE id = 1")
-        row = cursor.fetchone()
-        if row["cnt"] == 0:
-            conn.execute(
-                "INSERT INTO rules (id, temp_high, temp_low, humidity_high, humidity_low, updated_at) "
-                "VALUES (1, ?, ?, ?, ?, ?)",
-                (35.0, 0.0, 90.0, 10.0, datetime.now().timestamp()),
-            )
-
-        cursor = conn.execute("SELECT COUNT(*) as cnt FROM aggregation_checkpoints WHERE id = 1")
-        row = cursor.fetchone()
-        if row["cnt"] == 0:
-            conn.execute(
-                "INSERT INTO aggregation_checkpoints (id, last_window_end) VALUES (1, ?)",
-                (datetime.now().timestamp(),),
-            )
-
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_ts ON sensor_readings(timestamp)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_sensor ON sensor_readings(sensor_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_sensor ON alerts(sensor_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_sensor ON anomalies(sensor_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_received_at ON anomalies(received_at)")
+        _ensure_schema_version_table(conn)
+        current = _get_schema_version(conn)
+        target = SCHEMA_VERSION
+        if current >= target:
+            return
+        for version in range(current, target):
+            migration = _MIGRATIONS[version]
+            migration(conn)
+            _set_schema_version(conn, version + 1)
 
 
 def load_rules() -> AlertRule:
@@ -286,17 +332,18 @@ def clean_and_ingest(data: SensorData) -> dict:
             mean_temp, std_temp = _mean_std(temps)
             mean_hum, std_hum = _mean_std(hums)
 
+            eff_std_temp = max(std_temp, MIN_STD_TEMP) if std_temp is not None else None
+            eff_std_hum = max(std_hum, MIN_STD_HUMIDITY) if std_hum is not None else None
+
             temp_outlier = (
                 mean_temp is not None
-                and std_temp is not None
-                and std_temp > 0
-                and abs(data.temperature - mean_temp) > SIGMA_THRESHOLD * std_temp
+                and eff_std_temp is not None
+                and abs(data.temperature - mean_temp) > SIGMA_THRESHOLD * eff_std_temp
             )
             humidity_outlier = (
                 mean_hum is not None
-                and std_hum is not None
-                and std_hum > 0
-                and abs(data.humidity - mean_hum) > SIGMA_THRESHOLD * std_hum
+                and eff_std_hum is not None
+                and abs(data.humidity - mean_hum) > SIGMA_THRESHOLD * eff_std_hum
             )
 
             if temp_outlier or humidity_outlier:
